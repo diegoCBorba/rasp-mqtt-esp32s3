@@ -1,4 +1,4 @@
-# 📘 README — Teste de Comunicação MQTT
+# README — Teste de Comunicação MQTT
 
 **Projeto:** Sistema Automatizado de Irrigação Hidropônica
 **Arquitetura:** Raspberry Pi 3B + ESP32-S3 + Broker MQTT
