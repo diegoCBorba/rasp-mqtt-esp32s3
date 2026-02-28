@@ -16,6 +16,14 @@ unsigned long pumpDuration = 0;
 
 unsigned long lastPublish = 0;
 
+// dispositivo único
+const char* DEVICE_ID = "esp32_01";
+
+// tópicos construídos em setup()
+char topicTelemetry[64];
+char topicCommand[64];
+char topicStatus[64];
+
 void connectToWifi() {
   Serial.println("Conectando ao WiFi...");
   WiFi.begin(WIFI_SSID, WIFI_PASSWORD);
@@ -39,7 +47,7 @@ void onWifiDisconnect(const WiFiEvent_t event, const WiFiEventInfo_t info) {
 
 void onMqttConnect(bool sessionPresent) {
   Serial.println("MQTT conectado.");
-  mqttClient.subscribe("irrigacao/command", 1);
+  mqttClient.subscribe(topicCommand, 1);
 }
 
 void onMqttDisconnect(AsyncMqttClientDisconnectReason reason) {
@@ -47,6 +55,15 @@ void onMqttDisconnect(AsyncMqttClientDisconnectReason reason) {
   if (WiFi.isConnected()) {
     mqttReconnectTimer.once(2, connectToMqtt);
   }
+}
+
+void publishStatus() {
+  StaticJsonDocument<128> doc;
+  doc["pump"] = pumpState ? "on" : "off";
+  char buffer[128];
+  size_t n = serializeJson(doc, buffer);
+  mqttClient.publish(topicStatus, 1, false, buffer, n);
+  Serial.println("📤 Status enviado");
 }
 
 void onMqttMessage(char* topic,
@@ -66,11 +83,13 @@ void onMqttMessage(char* topic,
     pumpState = true;
     pumpStartTime = millis();
     Serial.println("💧 Bomba LIGADA");
+    publishStatus();
   }
 
   if (strcmp(action, "pump_off") == 0) {
     pumpState = false;
     Serial.println("🛑 Bomba DESLIGADA");
+    publishStatus();
   }
 }
 
@@ -88,13 +107,18 @@ void publishMockTelemetry() {
   char buffer[256];
   size_t n = serializeJson(doc, buffer);
 
-  mqttClient.publish("irrigacao/telemetry", 0, false, buffer, n);
+  mqttClient.publish(topicTelemetry, 0, false, buffer, n);
 
   Serial.println("📤 Telemetria enviada");
 }
 
 void setup() {
   Serial.begin(115200);
+
+  // monta tópicos com DEVICE_ID
+  snprintf(topicTelemetry, sizeof(topicTelemetry), "irrigacao/%s/telemetry", DEVICE_ID);
+  snprintf(topicCommand,   sizeof(topicCommand),   "irrigacao/%s/command",   DEVICE_ID);
+  snprintf(topicStatus,    sizeof(topicStatus),    "irrigacao/%s/status",    DEVICE_ID);
 
   WiFi.onEvent(onWifiConnect, WiFiEvent_t::ARDUINO_EVENT_WIFI_STA_GOT_IP);
   WiFi.onEvent(onWifiDisconnect, WiFiEvent_t::ARDUINO_EVENT_WIFI_STA_DISCONNECTED);
@@ -106,6 +130,9 @@ void setup() {
   mqttClient.setServer(MQTT_HOST, MQTT_PORT);
   mqttClient.setCredentials(MQTT_USER, MQTT_PASSWORD);
 
+  // opcional: LWT já configurado se necessário
+  // mqttClient.setWill(topicStatus, 1, false, "{\"pump\":\"offline\"}");
+
   connectToWifi();
 }
 
@@ -114,6 +141,7 @@ void loop() {
   if (pumpState && millis() - pumpStartTime >= pumpDuration * 1000) {
     pumpState = false;
     Serial.println("⏱️ Bomba DESLIGADA automaticamente");
+    publishStatus();
   }
 
   // Publicação periódica mock

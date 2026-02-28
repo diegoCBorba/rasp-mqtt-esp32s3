@@ -12,16 +12,21 @@ PORT = int(os.getenv("MQTT_PORT"))
 MQTT_USER = os.getenv("MQTT_USER")
 MQTT_PASSWORD = os.getenv("MQTT_PASSWORD")
 
-TOPIC_TELEMETRY = "irrigacao/telemetry"
-TOPIC_COMMAND = "irrigacao/command"
+# dispositivo de teste
+DEVICE_ID = "esp32_01"
+
+TOPIC_TELEMETRY = "irrigacao/+/telemetry"
+TOPIC_STATUS    = "irrigacao/+/status"
+TOPIC_COMMAND   = f"irrigacao/{DEVICE_ID}/command"
 
 def on_connect(client, userdata, flags, rc):
     print("Conectado ao broker:", rc)
     client.subscribe(TOPIC_TELEMETRY)
+    client.subscribe(TOPIC_STATUS)
 
 def on_message(client, userdata, msg):
     data = json.loads(msg.payload.decode())
-    print("📡 Telemetria recebida:", data)
+    print(f"📡 Mensagem em {msg.topic}: {data}")
 
 def send_test_command(client):
     payload = {
@@ -29,7 +34,7 @@ def send_test_command(client):
         "duration": 10
     }
     client.publish(TOPIC_COMMAND, json.dumps(payload), qos=1)
-    print("🚀 Comando pump_on enviado")
+    print("🚀 Comando pump_on enviado para", TOPIC_COMMAND)
 
 client = mqtt.Client()
 
