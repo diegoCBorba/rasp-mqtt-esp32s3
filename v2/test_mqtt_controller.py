@@ -6,18 +6,21 @@ import paho.mqtt.client as mqtt
 
 load_dotenv()
 
-BROKER      = os.getenv("MQTT_BROKER")
-PORT        = int(os.getenv("MQTT_PORT"))
-MQTT_USER   = os.getenv("MQTT_USER")
+BROKER        = os.getenv("MQTT_BROKER")
+PORT          = int(os.getenv("MQTT_PORT"))
+MQTT_USER     = os.getenv("MQTT_USER")
 MQTT_PASSWORD = os.getenv("MQTT_PASSWORD")
-
-DEVICE_ID = os.getenv("DEVICE_ID", "esp32_01")
+DEVICE_ID     = os.getenv("DEVICE_ID", "esp32_01")
 
 TOPIC_TELEMETRY = "irrigacao/+/telemetry"
 TOPIC_STATUS    = "irrigacao/+/status"
+TOPIC_HEARTBEAT = "irrigacao/+/heartbeat"
 TOPIC_COMMAND   = f"irrigacao/{DEVICE_ID}/command"
 
-# Estado local dos dispositivos
+HEARTBEAT_TIMEOUT = 45  # segundos
+
+# Estado local
+
 devices: dict[str, dict] = {}
 
 def update_device(device_id: str, data: dict):
@@ -29,6 +32,7 @@ def get_device(device_id: str) -> dict:
     return devices.get(device_id, {})
 
 # Callbacks MQTT
+
 def on_connect(client, userdata, flags, rc):
     codes = {
         0: "Conectado com sucesso",
@@ -43,8 +47,10 @@ def on_connect(client, userdata, flags, rc):
     if rc == 0:
         client.subscribe(TOPIC_TELEMETRY)
         client.subscribe(TOPIC_STATUS)
+        client.subscribe(TOPIC_HEARTBEAT)
         print(f"📡 Inscrito em: {TOPIC_TELEMETRY}")
         print(f"📡 Inscrito em: {TOPIC_STATUS}")
+        print(f"📡 Inscrito em: {TOPIC_HEARTBEAT}")
 
 def on_disconnect(client, userdata, rc):
     if rc == 0:
@@ -65,18 +71,18 @@ def on_message(client, userdata, msg):
         return
 
     device_id  = parts[1]
-    topic_type = parts[2]   # telemetry | status
+    topic_type = parts[2]
 
     if topic_type == "status":
         _handle_status(device_id, data)
-
     elif topic_type == "telemetry":
         _handle_telemetry(device_id, data)
+    elif topic_type == "heartbeat":
+        _handle_heartbeat(device_id, data)
 
 def _handle_status(device_id: str, data: dict):
     online = data.get("online", True)
     pump   = data.get("pump", "?")
-
     update_device(device_id, {"online": online, "pump": pump})
 
     if not online:
@@ -98,7 +104,34 @@ def _handle_telemetry(device_id: str, data: dict):
         f"diff={diff_abs:.2f}  vol={vol_total}"
     )
 
+def _handle_heartbeat(device_id: str, data: dict):
+    uptime = data.get("uptime_s", 0)
+    now    = time.time()
+
+    update_device(device_id, {"last_heartbeat": now, "uptime_s": uptime})
+
+    h = uptime // 3600
+    m = (uptime % 3600) // 60
+    s = uptime % 60
+    print(f"💓 [{device_id}] Heartbeat — uptime: {h:02d}:{m:02d}:{s:02d}")
+
+# Watchdog — detecta dispositivos silenciosos
+
+def check_heartbeat_watchdog():
+    now = time.time()
+    for device_id, state in devices.items():
+        last = state.get("last_heartbeat")
+        if last is None:
+            continue
+        elapsed = now - last
+        if elapsed > HEARTBEAT_TIMEOUT:
+            print(
+                f"⚠️  [{device_id}] Sem heartbeat há {int(elapsed)}s "
+                f"(timeout: {HEARTBEAT_TIMEOUT}s) — dispositivo pode estar travado"
+            )
+
 # Comandos
+
 def send_command(client, device_id: str, action: str, **kwargs):
     topic   = f"irrigacao/{device_id}/command"
     payload = {"action": action, **kwargs}
@@ -116,6 +149,7 @@ def pump_off(client, device_id: str):
     send_command(client, device_id, "pump_off")
 
 # Main
+
 def main():
     client = mqtt.Client()
     client.username_pw_set(MQTT_USER, MQTT_PASSWORD)
@@ -127,14 +161,18 @@ def main():
     client.connect(BROKER, PORT, keepalive=60)
     client.loop_start()
 
-    # Aguarda conexão estabilizar
     time.sleep(2)
 
-    # ── Teste: liga bomba por 10s ──
     pump_on(client, DEVICE_ID, duration=10)
+
+    last_watchdog = time.time()
 
     try:
         while True:
+            # Roda o watchdog a cada 15s
+            if time.time() - last_watchdog >= 15:
+                check_heartbeat_watchdog()
+                last_watchdog = time.time()
             time.sleep(1)
 
     except KeyboardInterrupt:
