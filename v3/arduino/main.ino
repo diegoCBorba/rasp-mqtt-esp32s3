@@ -10,14 +10,13 @@ Ticker mqttReconnectTimer;
 Ticker wifiReconnectTimer;
 
 bool pumpState = false;
-unsigned long pumpStartTime  = 0;
-unsigned long pumpDuration   = 0;
-unsigned long lastPublish    = 0;
-unsigned long lastHeartbeat  = 0;
+unsigned long pumpStartTime = 0;
+unsigned long pumpDuration  = 0;
+unsigned long lastHeartbeat = 0;
 
 const unsigned long HEARTBEAT_INTERVAL = 30000; // 30s
+const uint8_t RELAY_PIN = 4;
 
-char topicTelemetry[64];
 char topicCommand[64];
 char topicStatus[64];
 char topicHeartbeat[64];
@@ -45,6 +44,16 @@ void onWifiDisconnect(const WiFiEvent_t event, const WiFiEventInfo_t info) {
   wifiReconnectTimer.once(2, connectToWifi);
 }
 
+// Relé
+
+void relayOn() {
+  digitalWrite(RELAY_PIN, LOW);   // Relé ativo em LOW (ativo baixo)
+}
+
+void relayOff() {
+  digitalWrite(RELAY_PIN, HIGH);  // Relé inativo em HIGH
+}
+
 // MQTT
 
 void publishStatus() {
@@ -61,7 +70,6 @@ void publishHeartbeat() {
   StaticJsonDocument<128> doc;
   doc["uptime_s"] = millis() / 1000;
   doc["online"]   = true;
-
   char buffer[128];
   size_t n = serializeJson(doc, buffer);
   mqttClient.publish(topicHeartbeat, 1, false, buffer, n);
@@ -77,7 +85,6 @@ void onMqttConnect(bool sessionPresent) {
   mqttClient.subscribe(topicCommand, 1);
   Serial.println("✅ Inscrito em: " + String(topicCommand));
 
-  // Heartbeat imediato ao conectar
   publishHeartbeat();
   lastHeartbeat = millis();
 }
@@ -111,12 +118,14 @@ void onMqttMessage(char* topic,
     pumpDuration  = doc["duration"] | 5;
     pumpState     = true;
     pumpStartTime = millis();
+    relayOn();
     Serial.printf("💧 Bomba LIGADA por %lu segundos\n", pumpDuration);
     publishStatus();
   }
 
   else if (strcmp(action, "pump_off") == 0) {
     pumpState = false;
+    relayOff();
     Serial.println("🛑 Bomba DESLIGADA");
     publishStatus();
   }
@@ -126,29 +135,15 @@ void onMqttMessage(char* topic,
   }
 }
 
-// Telemetria mock
-
-void publishMockTelemetry() {
-  StaticJsonDocument<256> doc;
-  doc["flow1"]     = random(100, 200) / 100.0;
-  doc["flow2"]     = random(80,  180) / 100.0;
-  doc["diff_raw"]  = 0.12;
-  doc["diff_abs"]  = 0.12;
-  doc["diff_ma"]   = 0.10;
-  doc["vol_total"] = random(1, 10);
-
-  char buffer[256];
-  size_t n = serializeJson(doc, buffer);
-  mqttClient.publish(topicTelemetry, 0, false, buffer, n);
-  Serial.println("📤 Telemetria enviada");
-}
-
 // Setup
 
 void setup() {
   Serial.begin(115200);
 
-  snprintf(topicTelemetry, sizeof(topicTelemetry), "irrigacao/%s/telemetry", DEVICE_ID);
+  // Relé — inicia desligado antes de qualquer conexão
+  pinMode(RELAY_PIN, OUTPUT);
+  relayOff();
+
   snprintf(topicCommand,   sizeof(topicCommand),   "irrigacao/%s/command",   DEVICE_ID);
   snprintf(topicStatus,    sizeof(topicStatus),    "irrigacao/%s/status",    DEVICE_ID);
   snprintf(topicHeartbeat, sizeof(topicHeartbeat), "irrigacao/%s/heartbeat", DEVICE_ID);
@@ -173,13 +168,9 @@ void setup() {
 void loop() {
   if (pumpState && millis() - pumpStartTime >= pumpDuration * 1000UL) {
     pumpState = false;
+    relayOff();
     Serial.println("⏱️ Bomba DESLIGADA automaticamente");
     publishStatus();
-  }
-
-  if (millis() - lastPublish > 1000 && mqttClient.connected()) {
-    publishMockTelemetry();
-    lastPublish = millis();
   }
 
   if (millis() - lastHeartbeat > HEARTBEAT_INTERVAL && mqttClient.connected()) {
