@@ -98,7 +98,7 @@ Broker utilizado: **Eclipse Mosquitto** com autenticação e ACL configuradas.
 * Canal Realtime aberto via WebSocket — atualiza sem recarregar
 * Exibe: status online/offline, estado da bomba, uptime e horário da última atualização
 * Credenciais do frontend usam `anon key` (somente leitura)
-* [link_repositorio_front]()
+* [link_repositorio_front](https://github.com/diegoCBorba/irrigacao-dashboard)
 
 ---
 
