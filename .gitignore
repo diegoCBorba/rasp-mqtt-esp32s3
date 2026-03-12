@@ -1,3 +1,5 @@
 **/secrets.h
 **/.env
 **/.vscode
+captured_images/
+logs/
